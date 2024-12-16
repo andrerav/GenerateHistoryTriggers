@@ -1,0 +1,26 @@
+﻿[
+  {
+    "TableName": "posts",
+    "SchemaName": "public",
+    "HistorySchemaName": "history_tables",
+    "PreviousValidToColumnName": "OLD.created_date",
+    "PrimaryKeys": [
+      {
+        "PrimaryKeyName": "id",
+        "SqlType": "int"
+      }
+    ]
+  },
+  {
+    "TableName": "comments",
+    "SchemaName": "public",
+    "HistorySchemaName": "history_tables",
+    "PreviousValidToColumnName": "OLD.created_date",
+    "PrimaryKeys": [
+      {
+        "PrimaryKeyName": "id",
+        "SqlType": "int"
+      }
+    ]
+  }
+]

@@ -1,0 +1,64 @@
+﻿<#@ template language="C#" #>
+<#@ assembly name="System.Core" #>
+<#@ import namespace="System.Linq" #>
+<#@ import namespace="System.Text" #>
+<#@ import namespace="System.Collections.Generic" #>
+
+<# foreach (var schema in Tables.Select(t => t.HistorySchemaName).Distinct())
+{ #>
+CREATE SCHEMA IF NOT EXISTS <#= schema #>;
+<#
+}
+#>
+
+<# foreach (var table in Tables)
+ { #>
+
+CREATE TABLE IF NOT EXISTS <#= table.HistorySchemaName #>.<#= table.TableName #>_history
+(
+    <#= string.Join(",\r\n    ", table.PrimaryKeys.Select(pk => pk.PrimaryKeyName + " " + pk.SqlType + " NOT NULL")) #>,
+    row_data jsonb NOT NULL,
+    md5_hash varchar(32) NOT NULL,
+    revision integer NOT NULL DEFAULT 1,
+    active_from timestamp with time zone NOT NULL DEFAULT now(),
+    active_to timestamp with time zone,
+    CONSTRAINT <#= table.TableName #>_history_pkey PRIMARY KEY (
+        <# 
+        var pkNames = table.PrimaryKeys.Select(pk => pk.PrimaryKeyName).ToList();
+        pkNames.Add("revision");
+        #>
+        <#= string.Join(", ", pkNames) #>
+    )
+) TABLESPACE pg_default;
+
+-- Trigger function for <#= table.HistorySchemaName #>.<#= table.TableName #>_history
+CREATE OR REPLACE FUNCTION fn_<#= table.TableName #>_update_history() RETURNS trigger AS $fn_<#= table.TableName #>_update_history$
+	DECLARE
+		currentRevision integer := (select coalesce(max(revision) + 1, 1) from <#= table.HistorySchemaName #>.<#= table.TableName #>_history where <#= string.Join(" AND ", table.PrimaryKeys.Select(pk => pk.PrimaryKeyName + " = OLD." + pk.PrimaryKeyName)) #>);
+		previousRevision integer := (select max(revision) from <#= table.HistorySchemaName #>.<#= table.TableName #>_history where <#= string.Join(" AND ", table.PrimaryKeys.Select(pk => pk.PrimaryKeyName + " = OLD." + pk.PrimaryKeyName)) #>);
+		previousValidTo timestamp with time zone := (select max(active_to) from <#= table.HistorySchemaName #>.<#= table.TableName #>_history where <#= string.Join(" AND ", table.PrimaryKeys.Select(pk => pk.PrimaryKeyName + " = OLD." + pk.PrimaryKeyName)) #>);
+		newHash varchar(32) := (select md5(to_jsonb(NEW.*)::text));
+		currentHash varchar(32) := (select md5(to_jsonb(OLD.*)::text));
+		rightnow timestamp with time zone := NOW();
+	BEGIN		
+		-- Set active_from to the created date if this is the first row
+		IF previousRevision IS NULL THEN
+			previousValidTo = COALESCE(<#=table.PreviousValidToColumnName#>, NOW());
+		END IF;
+		
+		IF newHash IS NULL OR newHash <> currentHash THEN
+			INSERT INTO <#= table.HistorySchemaName #>.<#= table.TableName #>_history VALUES(<#= string.Join(", ", table.PrimaryKeys.Select(pk => "OLD." + pk.PrimaryKeyName)) #>, to_jsonb(OLD.*), currentHash, currentRevision, previousValidTo, rightnow);
+		END IF;
+		RETURN NEW;
+    END;
+$fn_<#= table.TableName #>_update_history$ LANGUAGE plpgsql;
+
+-- Trigger for <#= table.HistorySchemaName #>.<#= table.TableName #>_history
+DROP TRIGGER IF EXISTS trg_<#= table.TableName #>_on_update ON <#= table.SchemaName #>.<#= table.TableName #>;
+CREATE TRIGGER trg_<#= table.TableName #>_on_update
+    AFTER UPDATE OR DELETE ON <#= table.SchemaName #>.<#= table.TableName #>
+    FOR EACH ROW
+        EXECUTE FUNCTION fn_<#= table.TableName #>_update_history();
+<#
+}
+#>
